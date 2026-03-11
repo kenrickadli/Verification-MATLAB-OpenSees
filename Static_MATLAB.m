@@ -1,5 +1,5 @@
 % =========================================================================
-% 3D PORTAL FRAME - Direct Stiffness Method with Rigid Diaphragm
+% 3D PORTAL FRAME - Static Analysis (Direct Stiffness Method)
 % =========================================================================
 
 clear; clc;
@@ -7,7 +7,7 @@ clear; clc;
 % Units: Force (N), Length (m), Time (sec)
 g = 9.80665;  % m/s²
 
-fprintf('\n=== STRUCTURAL ANALYSIS STARTING ===\n');
+fprintf('\n=== STATIC ANALYSIS STARTING ===\n');
 
 %% ========================================================================
 % 1. STRUCTURE GEOMETRY
@@ -109,39 +109,7 @@ end
 fprintf('Created %d fixed supports at base\n', num_supports);
 
 %% ========================================================================
-% 7. CREATE RIGID DIAPHRAGM MASTER NODES
-% =========================================================================
-fprintf('--- Building Model: Rigid Diaphragm ---\n');
-
-num_rigid_floors = nz;
-master_nodes = zeros(num_rigid_floors, 4);
-rDtag = zeros(num_rigid_floors, 1);
-
-for k = 1:nz
-    master_node_num = ndt + k;
-    rDtag(k) = master_node_num;
-    
-    x_center = Lx * nx / 2;
-    y_center = Ly * ny / 2;
-    z_level = k * Lz;
-    
-    master_nodes(k, :) = [master_node_num, x_center, y_center, z_level];
-    
-    fprintf('Floor %d: Master node %d at (%.2f, %.2f, %.2f)\n', ...
-        k, master_node_num, x_center, y_center, z_level);
-end
-
-slave_node_info = [];
-for k = 1:nz
-    floor_start = k * nds + 1;
-    floor_end = (k + 1) * nds;
-    for node = floor_start:floor_end
-        slave_node_info = [slave_node_info; k, node];
-    end
-end
-
-%% ========================================================================
-% 8. DEFINE MEMBERS
+% 7. DEFINE MEMBERS
 % =========================================================================
 fprintf('--- Building Model: Members ---\n');
 
@@ -202,7 +170,7 @@ material_props = [Es, G] / 1e9;  % GPa
 cross_section_props = [A_beam*1e6, Ix_beam*1e12, Iy_beam*1e12, J*1e12];  % mm units
 
 %% ========================================================================
-% 9. DEFINE LOADS
+% 8. DEFINE LOADS
 % =========================================================================
 fprintf('--- Building Model: Loads ---\n');
 
@@ -216,14 +184,14 @@ joint_loads(:, 3) = -nodal_load;  % Z-direction
 fprintf('Applied %.2f N vertical load to %d nodes\n', nodal_load, num_joint_loads);
 
 %% ========================================================================
-% 10. DOF NUMBERING
+% 9. DOF NUMBERING
 % =========================================================================
 fprintf('\n--- Setting up Analysis ---\n');
 
 DOF_PER_JOINT = 6;
-total_nodes = num_joints + num_rigid_floors;
+total_nodes = num_joints;
 
-num_reactions = num_supports * 6 + 2 * num_rigid_floors;
+num_reactions = num_supports * 6;
 total_structural_dof = DOF_PER_JOINT * total_nodes;
 num_dof = total_structural_dof - num_reactions;
 
@@ -253,23 +221,8 @@ for i = 1:num_joints
     end
 end
 
-% Number master nodes (Ux, Uy, Uz, Rz free; Rx, Ry fixed)
-for i = 1:num_rigid_floors
-    node_num = num_joints + i;
-    for dof = 1:DOF_PER_JOINT
-        coord_index = (node_num - 1) * DOF_PER_JOINT + dof;
-        if dof == 4 || dof == 5
-            restrained_dof_counter = restrained_dof_counter + 1;
-            structure_coords(coord_index) = restrained_dof_counter;
-        else
-            free_dof_counter = free_dof_counter + 1;
-            structure_coords(coord_index) = free_dof_counter;
-        end
-    end
-end
-
 %% ========================================================================
-% 11. ASSEMBLE GLOBAL STIFFNESS MATRIX
+% 10. ASSEMBLE GLOBAL STIFFNESS MATRIX
 % =========================================================================
 fprintf('--- Assembling Global Stiffness Matrix ---\n');
 
@@ -335,64 +288,7 @@ end
 fprintf('Global stiffness matrix assembled (%dx%d)\n', num_dof, num_dof);
 
 %% ========================================================================
-% 12. APPLY RIGID DIAPHRAGM CONSTRAINTS
-% =========================================================================
-fprintf('--- Applying Rigid Diaphragm Constraints ---\n');
-
-max_stiffness = max(max(abs(K_global)));
-penalty = max_stiffness * 1e8;
-
-fprintf('Penalty factor: %.2e\n', penalty);
-
-for f = 1:num_rigid_floors
-    master_node_num = num_joints + f;
-    x_m = master_nodes(f, 2);
-    y_m = master_nodes(f, 3);
-    
-    master_ux_dof = structure_coords((master_node_num - 1) * 6 + 1);
-    master_uy_dof = structure_coords((master_node_num - 1) * 6 + 2);
-    master_uz_dof = structure_coords((master_node_num - 1) * 6 + 3);
-    master_rz_dof = structure_coords((master_node_num - 1) * 6 + 6);
-    
-    floor_slaves = slave_node_info(slave_node_info(:,1) == f, 2);
-    
-    for s = 1:length(floor_slaves)
-        joint_num = floor_slaves(s);
-        
-        x_s = joint_coords(joint_num, 1);
-        y_s = joint_coords(joint_num, 2);
-        
-        dx = x_s - x_m + 1e-12 * randn();
-        dy = y_s - y_m + 1e-12 * randn();
-        
-        slave_ux_dof = structure_coords((joint_num - 1) * 6 + 1);
-        slave_uy_dof = structure_coords((joint_num - 1) * 6 + 2);
-        slave_uz_dof = structure_coords((joint_num - 1) * 6 + 3);
-        slave_rz_dof = structure_coords((joint_num - 1) * 6 + 6);
-        
-        K_global = apply_constraint(K_global, penalty, slave_ux_dof, master_ux_dof, num_dof);
-        K_global = apply_constraint(K_global, penalty, slave_uy_dof, master_uy_dof, num_dof);
-        K_global = apply_constraint(K_global, penalty, slave_uz_dof, master_uz_dof, num_dof);
-        K_global = apply_constraint(K_global, penalty, slave_rz_dof, master_rz_dof, num_dof);
-        
-        if slave_ux_dof <= num_dof && master_rz_dof <= num_dof
-            K_global(slave_ux_dof, master_rz_dof) = K_global(slave_ux_dof, master_rz_dof) + penalty * dy;
-            K_global(master_rz_dof, slave_ux_dof) = K_global(master_rz_dof, slave_ux_dof) + penalty * dy;
-            K_global(master_rz_dof, master_rz_dof) = K_global(master_rz_dof, master_rz_dof) + penalty * dy^2;
-        end
-        
-        if slave_uy_dof <= num_dof && master_rz_dof <= num_dof
-            K_global(slave_uy_dof, master_rz_dof) = K_global(slave_uy_dof, master_rz_dof) - penalty * dx;
-            K_global(master_rz_dof, slave_uy_dof) = K_global(master_rz_dof, slave_uy_dof) - penalty * dx;
-            K_global(master_rz_dof, master_rz_dof) = K_global(master_rz_dof, master_rz_dof) + penalty * dx^2;
-        end
-    end
-    
-    fprintf('Floor %d: Constraints applied for %d slave nodes\n', f, length(floor_slaves));
-end
-
-%% ========================================================================
-% 13. APPLY LOADS
+% 11. APPLY LOADS
 % =========================================================================
 fprintf('--- Applying Loads ---\n');
 
@@ -412,7 +308,7 @@ end
 fprintf('Loads applied to %d nodes\n', num_joint_loads);
 
 %% ========================================================================
-% 14. SOLVE SYSTEM
+% 12. SOLVE SYSTEM
 % =========================================================================
 fprintf('\n--- Solving System ---\n');
 
@@ -421,10 +317,9 @@ D_global = K_global \ P_global;
 solve_time = toc;
 
 fprintf('Solution completed in %.4f seconds\n', solve_time);
-fprintf('Maximum displacement: %.4f mm\n', max(abs(D_global)) * 1000);
 
 %% ========================================================================
-% 15. EXTRACT RESULTS
+% 13. EXTRACT RESULTS
 % =========================================================================
 fprintf('\n--- Extracting Results ---\n');
 
@@ -447,9 +342,6 @@ for i = (nds+1):ndt
     displacements = [displacements, uz];
     fprintf('Node %d: Uz = %.6f mm\n', i, uz);
 end
-
-fprintf('\nDisplacements array: ');
-fprintf('[%.6f, %.6f, %.6f, %.6f]\n', displacements);
 
 fprintf('\n=== ANALYSIS COMPLETE ===\n');
 
@@ -513,14 +405,5 @@ function K_global = assemble_member(K_global, K_member, node_i, node_j, coords, 
                 end
             end
         end
-    end
-end
-
-function K = apply_constraint(K, penalty, slave_dof, master_dof, num_dof)
-    if slave_dof <= num_dof && master_dof <= num_dof
-        K(slave_dof, slave_dof) = K(slave_dof, slave_dof) + penalty;
-        K(slave_dof, master_dof) = K(slave_dof, master_dof) - penalty;
-        K(master_dof, slave_dof) = K(master_dof, slave_dof) - penalty;
-        K(master_dof, master_dof) = K(master_dof, master_dof) + penalty;
     end
 end
