@@ -1,5 +1,5 @@
 # =========================================================================
-# 3D PORTAL FRAME - Direct Stiffness Method with Rigid Diaphragm
+# 3D PORTAL FRAME - Static Analysis (Direct Stiffness Method)
 # =========================================================================
 
 import os
@@ -27,8 +27,8 @@ StructureArray = [
 ]
 
 Lx, Ly, Lz, nx, ny, nz = StructureArray
-ndt = (nx + 1) * (ny + 1) * (nz + 1)
-nds = (nx + 1) * (ny + 1)
+ndt = (nx + 1) * (ny + 1) * (nz + 1)  # Total nodes
+nds = (nx + 1) * (ny + 1)             # Nodes per floor
 
 # =========================================================================
 # LOADING
@@ -42,12 +42,12 @@ LoadingArray = [
 
 SIDL, Live, h_slab, rho_c = LoadingArray
 
-floor_area = (Lx * nx) * (Ly * ny)  # m²
-m_Dead = rho_c * (h_slab * 1e-3) * floor_area  # kg
-m_SIDL = (SIDL * 1e3) * floor_area / g  # kg
-m_Live = (Live * 1e3) * floor_area / g  # kg
+floor_area = (Lx * nx) * (Ly * ny) # (m²)
+m_Dead = rho_c * (h_slab * 1e-3) * floor_area # (kg)
+m_SIDL = (SIDL * 1e3) * floor_area / g  # (kg)
+m_Live = (Live * 1e3) * floor_area / g  # (kg)
 mass_source = (m_Dead + m_SIDL + 0.5 * m_Live)
-mz = mass_source * ((Lx * nx)**2 + (Ly * ny)**2) / 12  # kg⋅m²
+mz = mass_source * ((Lx * nx)**2 + (Ly * ny)**2) / 12  # (kg⋅m²)
  
 print(f"Total mass per floor: {mass_source:.0f} kg")
 
@@ -119,25 +119,6 @@ for i in range(1, nds + 1):
     ops.fix(i, 1, 1, 1, 1, 1, 1)
 
 # =========================================================================
-# RIGID DIAPHRAGM
-# =========================================================================
-rDtag = []
-for k in range(1, nz + 1):
-    master_node = ndt + k
-    rDtag.append(master_node)
-    ops.node(master_node, Lx * nx / 2, Ly * ny / 2, k * Lz)
-
-for k in range(1, nz + 1): 
-    floor_nodes = [int(n) for n in np.arange(k*nds + 1, (k + 1)*nds + 1)] 
-    ops.rigidDiaphragm(3, rDtag[k-1], *floor_nodes)
-
-for i in range(len(rDtag)): 
-    ops.fix(rDtag[i], 0, 0, 1, 1, 1, 0)
-
-for i in range(len(rDtag)):
-    ops.mass(rDtag[i], mass_source, mass_source, 0, 0, 0, mz)
-
-# =========================================================================
 # SECTIONS AND TRANSFORMATIONS
 # =========================================================================
 ops.section('Elastic', 1, Es, A_beam, Ix_beam, Iy_beam, G, J)
@@ -203,10 +184,11 @@ for i in range(nds, ndt + 1):
     nodal_load = 1/4 * mass_source * g / (nx * ny)
     ops.load(i, 0, 0, -nodal_load, 0, 0, 0)
 
+print(nodal_load)
+
 # =========================================================================
 # ANALYSIS CONFIGURATION
 # =========================================================================
-print(nodal_load)
 iterations = 6
 tolerance = 1e-8
 constraintsType = "Transformation"
@@ -237,4 +219,4 @@ else:
 displacements = []
 for i in range(5, 9):
     displacements.append(ops.nodeDisp(i, 3) * 10**3)
-print(displacements)
+print("Displacements (mm):", [round(d, 6) for d in displacements])
